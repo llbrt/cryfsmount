@@ -1,0 +1,15 @@
+# maven
+target
+dependency-reduced-pom.xml
+
+# IDE
+.idea
+.settings
+.project
+.classpath
+
+# MacOS
+.DS_Store
+
+# Other
+.factorypath

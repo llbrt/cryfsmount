@@ -1,0 +1,10 @@
+Package: ${cmd.mount}
+Version: ${project.version}
+Architecture: amd64
+Maintainer: llbrt <https://github.com/llbrt>
+Installed-Size: 47747072
+Section: contrib/admin
+Priority: optional
+Essential: no
+Homepage: https://github.com/llbrt/cryptofssrv
+Description: Mounts a filesystem ciphered by Cryptomator
