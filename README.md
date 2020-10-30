@@ -25,7 +25,7 @@ If the mount point is not set, a new temporary directory is created.
 
 The passphrase of the vault can be typed, set in a file or in an environment variable.
 
-*WARNING*: when the passphrase is set in a file, make sure there is no trailer end-of-line. For the string `My pass`, create the file with
+*WARNING*: when the passphrase is set in a file, make sure there is no trailing end-of-line. For the string `My pass`, create the file with
 ```
 echo -n "My pass" > pass.txt
 ```
