@@ -31,9 +31,9 @@
 		<cmd.umount>cryfsumount</cmd.umount>
 
 		<!-- Dependencies -->
-		<cryptomator-fuse.version>1.2.4</cryptomator-fuse.version>
-		<cryptomator-fs.version>1.9.12</cryptomator-fs.version>
-		<picocli.version>4.5.1</picocli.version>
+		<cryptomator-fuse.version>1.2.9</cryptomator-fuse.version>
+		<cryptomator-fs.version>1.9.14</cryptomator-fs.version>
+		<picocli.version>4.6.1</picocli.version>
 		<logback.version>1.2.3</logback.version>
 		<junit.version>5.7.0</junit.version>
 	</properties>
