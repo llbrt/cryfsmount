@@ -1,11 +1,12 @@
 package com.github.llbrt.cryptofs.fuse;
 
-import static org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags.MIGRATE_IMPLICITLY;
 import static org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags.READONLY;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -14,8 +15,9 @@ import org.cryptomator.cryptofs.CryptoFileSystem;
 import org.cryptomator.cryptofs.CryptoFileSystemProperties;
 import org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags;
 import org.cryptomator.cryptofs.CryptoFileSystemProvider;
-import org.cryptomator.frontend.fuse.mount.CommandFailedException;
+import org.cryptomator.cryptolib.common.MasterkeyFileAccess;
 import org.cryptomator.frontend.fuse.mount.EnvironmentVariables;
+import org.cryptomator.frontend.fuse.mount.FuseMountException;
 import org.cryptomator.frontend.fuse.mount.FuseMountFactory;
 import org.cryptomator.frontend.fuse.mount.Mount;
 import org.cryptomator.frontend.fuse.mount.Mounter;
@@ -23,13 +25,29 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.github.llbrt.cryptofs.MountedFs;
+import com.google.common.base.Preconditions;
 
 public final class FuseCryptoFs implements MountedFs {
 	private static final Logger log = LoggerFactory.getLogger(FuseCryptoFs.class);
 
 	private static final FileSystemFlags[] EMPTY_FLAGS = new FileSystemFlags[0];
 
+	private static final byte[] EMPTY_ARRAY = new byte[0];
+	private static final String SCHEME = "masterkeyfile";
+
 	private static final String DEFAULT_MASTERKEY_FILENAME = "masterkey.cryptomator";
+
+	// Master key file management
+	private static final MasterkeyFileAccess masterkeyFileAccess;
+	static {
+		SecureRandom secureRandom;
+		try {
+			secureRandom = SecureRandom.getInstanceStrong();
+		} catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException("A strong algorithm must exist in every Java platform.", e);
+		}
+		masterkeyFileAccess = new MasterkeyFileAccess(EMPTY_ARRAY, secureRandom);
+	}
 
 	private final CryptoFileSystem fs;
 	private final Mount mount;
@@ -97,11 +115,12 @@ public final class FuseCryptoFs implements MountedFs {
 		Mounter mounter = FuseMountFactory.getMounter();
 		EnvironmentVariables envVars = EnvironmentVariables.create()
 				.withFlags(mounter.defaultMountFlags())
+				.withFileNameTranscoder(mounter.defaultFileNameTranscoder())
 				.withMountPoint(mountPoint)
 				.build();
 		try {
 			return new FuseCryptoFs(fs, mounter.mount(fs.getPath("/"), envVars), mountPoint);
-		} catch (CommandFailedException e) {
+		} catch (FuseMountException e) {
 			throw new RuntimeException(e);
 		}
 	}
@@ -145,14 +164,19 @@ public final class FuseCryptoFs implements MountedFs {
 
 		public final MountedFs mount() throws IOException {
 			List<FileSystemFlags> flags = new ArrayList<>();
-			if (migrateFs) {
-				flags.add(MIGRATE_IMPLICITLY);
-			}
+//			if (migrateFs) {
+//				flags.add(MIGRATE_IMPLICITLY);
+//			}
 			if (readOnly) {
 				flags.add(READONLY);
 			}
 			CryptoFileSystemProperties cryptoFileSystemProperties = CryptoFileSystemProperties
-					.withPassphrase(passphrase)
+					.cryptoFileSystemProperties()
+					.withKeyLoader(keyId -> {
+						Preconditions.checkArgument(SCHEME.equalsIgnoreCase(keyId.getScheme()), "Only supports keys with scheme " + SCHEME);
+						Path keyFilePath = vaultDir.resolve(keyId.getSchemeSpecificPart());
+						return masterkeyFileAccess.load(keyFilePath, passphrase);
+					})
 					.withFlags(flags.toArray(EMPTY_FLAGS))
 					.build();
 
@@ -163,8 +187,9 @@ public final class FuseCryptoFs implements MountedFs {
 				log.info("Mount point: " + mountPoint);
 			}
 			if (initializeVault) {
-				Files.createDirectories(vaultDir);
-				CryptoFileSystemProvider.initialize(vaultDir, DEFAULT_MASTERKEY_FILENAME, passphrase);
+				throw new IllegalArgumentException("unsupported");
+//				Files.createDirectories(vaultDir);
+//				CryptoFileSystemProvider.initialize(vaultDir, DEFAULT_MASTERKEY_FILENAME, passphrase);
 			}
 			CryptoFileSystem fs = CryptoFileSystemProvider.newFileSystem(vaultDir, cryptoFileSystemProperties);
 			return FuseCryptoFs.mount(fs, mountPoint);
