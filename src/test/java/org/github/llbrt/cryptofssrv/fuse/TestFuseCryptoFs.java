@@ -74,9 +74,10 @@ public class TestFuseCryptoFs {
 	@ValueSource(strings =
 	{ VAULT_FORMAT_V6, VAULT_FORMAT_V7 })
 	public void testMountOlderVersion_fails(String format) throws IOException {
+		Path oldFormatCopy = copyVault(format, "copy-" + format);
+		var mountOptions = prepareTestVault(oldFormatCopy);
 		assertThrows(FileSystemNeedsMigrationException.class,
-				() -> prepareTestVault(format)
-						.mount());
+				() -> mountOptions.mount());
 	}
 
 	@ParameterizedTest
@@ -95,10 +96,11 @@ public class TestFuseCryptoFs {
 	@ValueSource(strings =
 	{ VAULT_FORMAT_V6, VAULT_FORMAT_V7 })
 	public void testMountOlderVersion_readOnly_fails(String format) throws IOException {
+		Path oldFormatCopy = copyVault(format, "copy-" + format);
+		var mountOptions = prepareTestVault(oldFormatCopy)
+				.readOnly();
 		assertThrows(FileSystemNeedsMigrationException.class,
-				() -> prepareTestVault(format)
-						.readOnly()
-						.mount());
+				() -> mountOptions.mount());
 	}
 
 	@Test
@@ -134,7 +136,6 @@ public class TestFuseCryptoFs {
 	}
 
 	@Test
-	@Disabled
 	public void testMountNewVault() throws IOException {
 		Path vault = tempDirRoot.resolve("empty-vault");
 		Files.createDirectory(vault);
@@ -154,7 +155,6 @@ public class TestFuseCryptoFs {
 	}
 
 	@Test
-	@Disabled
 	public void testMountCurrentVersion_initialize_fails() throws IOException {
 		Path initializedVault = copyVault(VAULT_CURRENT_FORMAT, "initialized");
 		assertThrows(FileAlreadyExistsException.class, () -> prepareTestVault(initializedVault)
@@ -211,10 +211,6 @@ public class TestFuseCryptoFs {
 		}
 	}
 
-	private MountOptions prepareTestVault(String name) {
-		return prepareTestVault(getVaultPath(name));
-	}
-
 	private MountOptions prepareTestVault(Path vaultDir) {
 		return FuseCryptoFs.mountOptions(vaultDir, PASSPHRASE)
 				.mountPoint(mountPoint);
@@ -255,6 +251,10 @@ public class TestFuseCryptoFs {
 		assertEquals(sumFile(), remainingFiles.get(0));
 	}
 
+	// Remove path from sums:
+	// - if found, check file sum
+	// - if not found, we verify at the end of the test how many files
+	// are present in the mounted file system
 	private boolean md5SumMatches(Path path, Map<Path, String> sums) {
 		try {
 			String sum = sums.remove(path);

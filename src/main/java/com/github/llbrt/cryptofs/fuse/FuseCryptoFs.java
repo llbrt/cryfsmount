@@ -3,6 +3,7 @@ package com.github.llbrt.cryptofs.fuse;
 import static org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags.READONLY;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.NoSuchAlgorithmException;
@@ -15,6 +16,10 @@ import org.cryptomator.cryptofs.CryptoFileSystem;
 import org.cryptomator.cryptofs.CryptoFileSystemProperties;
 import org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags;
 import org.cryptomator.cryptofs.CryptoFileSystemProvider;
+import org.cryptomator.cryptolib.api.CryptoException;
+import org.cryptomator.cryptolib.api.CryptorProvider;
+import org.cryptomator.cryptolib.api.Masterkey;
+import org.cryptomator.cryptolib.api.MasterkeyLoader;
 import org.cryptomator.cryptolib.common.MasterkeyFileAccess;
 import org.cryptomator.frontend.fuse.mount.EnvironmentVariables;
 import org.cryptomator.frontend.fuse.mount.FuseMountException;
@@ -35,17 +40,28 @@ public final class FuseCryptoFs implements MountedFs {
 	private static final byte[] EMPTY_ARRAY = new byte[0];
 	private static final String SCHEME = "masterkeyfile";
 
-	private static final String DEFAULT_MASTERKEY_FILENAME = "masterkey.cryptomator";
+	private static final String MASTERKEY_FILENAME = "masterkey.cryptomator";
+	private static final URI KEY_ID = URI.create(SCHEME + ":" + MASTERKEY_FILENAME);
+
+	// Wait at most 30 seconds
+	private static final int UMOUNT_COUNT_MAX = 60;
+	private static final long UMOUNT_RETRY_WAIT = 500;
 
 	// Master key file management
+	private static final SecureRandom secureRandom;
 	private static final MasterkeyFileAccess masterkeyFileAccess;
+
 	static {
-		SecureRandom secureRandom;
+		SecureRandom secureRandomTmp;
 		try {
-			secureRandom = SecureRandom.getInstanceStrong();
+			// TODO: should be SecureRandom.getInstanceStrong()
+			// detect kernel version (> 5.6 wouldn't be slow with SecureRandom.getInstanceStrong())
+			// or install https://github.com/jirka-h/haveged
+			secureRandomTmp = SecureRandom.getInstance("SHA1PRNG");
 		} catch (NoSuchAlgorithmException e) {
-			throw new IllegalStateException("A strong algorithm must exist in every Java platform.", e);
+			throw new IllegalStateException("A strong algorithm should be installed", e);
 		}
+		secureRandom = secureRandomTmp;
 		masterkeyFileAccess = new MasterkeyFileAccess(EMPTY_ARRAY, secureRandom);
 	}
 
@@ -72,7 +88,7 @@ public final class FuseCryptoFs implements MountedFs {
 	@Override
 	public void umount() {
 		try {
-			mount.unmount();
+			attemptUmount();
 		} catch (Exception e) {
 			try {
 				log.warn("umount failed, try to force umount", e);
@@ -85,6 +101,24 @@ public final class FuseCryptoFs implements MountedFs {
 				mount.close();
 			} catch (Exception e) {
 				log.warn("close failed", e);
+			}
+		}
+	}
+
+	/**
+	 * Tries to unmount the file system.
+	 */
+	private void attemptUmount() throws InterruptedException, FuseMountException {
+		for (int c = 0; c <= UMOUNT_COUNT_MAX; c++) {
+			try {
+				mount.unmount();
+				return;
+			} catch (FuseMountException e) {
+				if (c >= UMOUNT_COUNT_MAX) {
+					throw e;
+				}
+				log.warn("umount failed (retry)", e);
+				Thread.sleep(UMOUNT_RETRY_WAIT);
 			}
 		}
 	}
@@ -187,12 +221,33 @@ public final class FuseCryptoFs implements MountedFs {
 				log.info("Mount point: " + mountPoint);
 			}
 			if (initializeVault) {
-				throw new IllegalArgumentException("unsupported");
-//				Files.createDirectories(vaultDir);
-//				CryptoFileSystemProvider.initialize(vaultDir, DEFAULT_MASTERKEY_FILENAME, passphrase);
+				initializeNewVault();
 			}
 			CryptoFileSystem fs = CryptoFileSystemProvider.newFileSystem(vaultDir, cryptoFileSystemProperties);
 			return FuseCryptoFs.mount(fs, mountPoint);
+		}
+
+		private void initializeNewVault() throws IOException {
+			Files.createDirectories(vaultDir);
+
+			// Write masterkey
+			Path masterkeyFilePath = vaultDir.resolve(MASTERKEY_FILENAME);
+			try (Masterkey masterkey = Masterkey.generate(secureRandom)) {
+				masterkeyFileAccess.persist(masterkey, masterkeyFilePath, passphrase);
+
+				// Initialize vault
+				try {
+					MasterkeyLoader loader = ignored -> masterkey.copy();
+					CryptoFileSystemProperties fsProps = CryptoFileSystemProperties.cryptoFileSystemProperties()
+							// TODO change default class reseeding using slow SecureRandom.getInstanceStrong()?
+							.withCipherCombo(CryptorProvider.Scheme.SIV_CTRMAC)
+							.withKeyLoader(loader)
+							.build();
+					CryptoFileSystemProvider.initialize(vaultDir, fsProps, KEY_ID);
+				} catch (CryptoException e) {
+					throw new IOException("Failed initialize vault.", e);
+				}
+			}
 		}
 	}
 }
