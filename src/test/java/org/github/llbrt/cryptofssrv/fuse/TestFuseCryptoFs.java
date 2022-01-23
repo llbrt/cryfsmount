@@ -31,7 +31,6 @@ import java.util.stream.Stream;
 
 import org.cryptomator.cryptofs.FileSystemNeedsMigrationException;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -83,9 +82,8 @@ public class TestFuseCryptoFs {
 	@ParameterizedTest
 	@ValueSource(strings =
 	{ VAULT_FORMAT_V6, VAULT_FORMAT_V7 })
-	@Disabled
 	public void testMountOlderVersion_migrates(String format) throws IOException {
-		Path oldFormatForMigration = copyVault(format, "toMigrate");
+		Path oldFormatForMigration = copyVault(format, "to-migrate-" + format);
 		MountedFs mounted = prepareTestVault(oldFormatForMigration)
 				.migrateFs()
 				.mount();
@@ -275,7 +273,7 @@ public class TestFuseCryptoFs {
 	}
 
 	private Path copyVault(String source, String dirName) throws IOException {
-		Path oldFormatForMigration = tempDirRoot.resolve(dirName);
+		Path vaultCopy = tempDirRoot.resolve(dirName);
 
 		Path root = getVaultPath(source);
 		Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
@@ -293,10 +291,10 @@ public class TestFuseCryptoFs {
 			}
 
 			private Path toCreate(Path path) {
-				return oldFormatForMigration.resolve(root.relativize(path));
+				return vaultCopy.resolve(root.relativize(path));
 			}
 		});
 
-		return oldFormatForMigration;
+		return vaultCopy;
 	}
 }

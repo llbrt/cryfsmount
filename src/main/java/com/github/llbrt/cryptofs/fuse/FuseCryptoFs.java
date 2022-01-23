@@ -1,6 +1,9 @@
 package com.github.llbrt.cryptofs.fuse;
 
+import static java.lang.Math.min;
+
 import static org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags.READONLY;
+import static org.cryptomator.cryptofs.migration.api.MigrationContinuationListener.ContinuationResult.PROCEED;
 
 import java.io.IOException;
 import java.net.URI;
@@ -16,6 +19,10 @@ import org.cryptomator.cryptofs.CryptoFileSystem;
 import org.cryptomator.cryptofs.CryptoFileSystemProperties;
 import org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags;
 import org.cryptomator.cryptofs.CryptoFileSystemProvider;
+import org.cryptomator.cryptofs.migration.Migrators;
+import org.cryptomator.cryptofs.migration.api.MigrationContinuationListener.ContinuationEvent;
+import org.cryptomator.cryptofs.migration.api.MigrationContinuationListener.ContinuationResult;
+import org.cryptomator.cryptofs.migration.api.MigrationProgressListener.ProgressState;
 import org.cryptomator.cryptolib.api.CryptoException;
 import org.cryptomator.cryptolib.api.CryptorProvider;
 import org.cryptomator.cryptolib.api.Masterkey;
@@ -40,6 +47,8 @@ public final class FuseCryptoFs implements MountedFs {
 	private static final byte[] EMPTY_ARRAY = new byte[0];
 	private static final String SCHEME = "masterkeyfile";
 
+	private static final String VAULTCONFIG_FILENAME = "vault.cryptomator";
+
 	private static final String MASTERKEY_FILENAME = "masterkey.cryptomator";
 	private static final URI KEY_ID = URI.create(SCHEME + ":" + MASTERKEY_FILENAME);
 
@@ -54,10 +63,7 @@ public final class FuseCryptoFs implements MountedFs {
 	static {
 		SecureRandom secureRandomTmp;
 		try {
-			// TODO: should be SecureRandom.getInstanceStrong()
-			// detect kernel version (> 5.6 wouldn't be slow with SecureRandom.getInstanceStrong())
-			// or install https://github.com/jirka-h/haveged
-			secureRandomTmp = SecureRandom.getInstance("SHA1PRNG");
+			secureRandomTmp = SecureRandom.getInstanceStrong();
 		} catch (NoSuchAlgorithmException e) {
 			throw new IllegalStateException("A strong algorithm should be installed", e);
 		}
@@ -198,9 +204,12 @@ public final class FuseCryptoFs implements MountedFs {
 
 		public final MountedFs mount() throws IOException {
 			List<FileSystemFlags> flags = new ArrayList<>();
-//			if (migrateFs) {
-//				flags.add(MIGRATE_IMPLICITLY);
-//			}
+			if (migrateFs) {
+				do {
+					log.info("Migration requested");
+				} while (migrate());
+				log.info("Migration done");
+			}
 			if (readOnly) {
 				flags.add(READONLY);
 			}
@@ -239,7 +248,6 @@ public final class FuseCryptoFs implements MountedFs {
 				try {
 					MasterkeyLoader loader = ignored -> masterkey.copy();
 					CryptoFileSystemProperties fsProps = CryptoFileSystemProperties.cryptoFileSystemProperties()
-							// TODO change default class reseeding using slow SecureRandom.getInstanceStrong()?
 							.withCipherCombo(CryptorProvider.Scheme.SIV_CTRMAC)
 							.withKeyLoader(loader)
 							.build();
@@ -248,6 +256,24 @@ public final class FuseCryptoFs implements MountedFs {
 					throw new IOException("Failed initialize vault.", e);
 				}
 			}
+		}
+
+		private boolean migrate() throws IOException {
+			Migrators migrators = Migrators.get();
+			if (!migrators.needsMigration(vaultDir, VAULTCONFIG_FILENAME, MASTERKEY_FILENAME)) {
+				return false;
+			}
+			migrators.migrate(vaultDir, VAULTCONFIG_FILENAME, MASTERKEY_FILENAME, passphrase, this::migrationProgressChanged, this::migrationRequiresInput);
+			return migrators.needsMigration(vaultDir, VAULTCONFIG_FILENAME, MASTERKEY_FILENAME);
+		}
+
+		private void migrationProgressChanged(ProgressState state, double progress) {
+			log.info("Migration {}: {}%", state, min(100, (int) (progress * 100)));
+		}
+
+		private ContinuationResult migrationRequiresInput(ContinuationEvent continuationEvent) {
+			log.info("Migration {} necessary", continuationEvent);
+			return PROCEED;
 		}
 	}
 }
