@@ -9,9 +9,9 @@ If you find this project useful, consider donating to [CRYPTOMATOR](https://cryp
 
 ## Build
 
-This project requires [Maven](https://maven.apache.org/) and a JDK version 11.
+This project requires [Maven](https://maven.apache.org/) and a JDK version 17.
 
-For a smaller package, the build should be done with the community version of Azul, [Zulu](https://www.azul.com/downloads/zulu-community/?version=java-11-lts&os=linux&package=jdk) (around deb 27MB / installed 47MB with Zulu11.39+15-CA (build 11.0.7+10-LTS), but deb 87MB/ installed 322MB with 11.0.8+10-post-Ubuntu-0ubuntu118.04.1).
+For a smaller package, the build could be done with the community version of Azul, [Zulu](https://www.azul.com/downloads/zulu-community/?version=java-17-lts&os=linux&package=jdk) - around deb 29MB / installed 51MB with Zulu17.32+13-CA (build 17.0.2+8-LTS).
 
 The command `dpkg-deb` is necessary to create the Debian package.
 
@@ -19,7 +19,7 @@ The command `dpkg-deb` is necessary to create the Debian package.
 
 The command `/opt/cryfsmount/bin/cryfsmount` can create a new vault or migrate an old vault to the latest format.
 
-Close the vault be stopping the process.
+Stop the process to close the vault.
 
 If the mount point is not set, a new temporary directory is created.
 
@@ -31,3 +31,7 @@ echo -n "My pass" > pass.txt
 ```
 
 *WARNING*: the command `cryfsumount` stops ALL the running `cryfsmount` processes.
+
+## Troubleshooting
+
+You may experience slowness due to the generation of random numbers. In this case, [haveged](https://github.com/jirka-h/haveged) should be installed (Linux kernel before 5.6).

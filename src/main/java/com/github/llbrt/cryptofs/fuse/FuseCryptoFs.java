@@ -109,6 +109,7 @@ public final class FuseCryptoFs implements MountedFs {
 				log.warn("close failed", e);
 			}
 		}
+		log.info("umount done");
 	}
 
 	/**
@@ -117,6 +118,7 @@ public final class FuseCryptoFs implements MountedFs {
 	private void attemptUmount() throws InterruptedException, FuseMountException {
 		for (int c = 0; c <= UMOUNT_COUNT_MAX; c++) {
 			try {
+				log.info("umount attempt");
 				mount.unmount();
 				return;
 			} catch (FuseMountException e) {
