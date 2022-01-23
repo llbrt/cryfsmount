@@ -10,7 +10,7 @@ public final class ExtendedPatternLayoutEncoder extends PatternLayoutEncoder {
 	@Override
 	public void start() {
 		// Declare new converter
-		PatternLayout.defaultConverterMap.put(
+		PatternLayout.DEFAULT_CONVERTER_MAP.put(
 				"processId", ProcessIdConverter.class.getName());
 		super.start();
 	}

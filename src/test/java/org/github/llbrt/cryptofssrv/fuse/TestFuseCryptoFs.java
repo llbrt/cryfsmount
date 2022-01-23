@@ -2,6 +2,7 @@ package org.github.llbrt.cryptofssrv.fuse;
 
 import static java.nio.file.FileVisitResult.CONTINUE;
 import static java.nio.file.StandardOpenOption.CREATE_NEW;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -32,6 +33,8 @@ import org.cryptomator.cryptofs.FileSystemNeedsMigrationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.github.llbrt.cryptofs.MountedFs;
 import com.github.llbrt.cryptofs.fuse.FuseCryptoFs;
@@ -42,8 +45,13 @@ public class TestFuseCryptoFs {
 
 	private static final char[] PASSPHRASE = "T€st-Un1t".toCharArray();
 
-	private static final String VAULT_OLDER_FORMAT = "vault-1.4.11";
-	private static final String VAULT_CURRENT_FORMAT = "vault-1.5.6";
+	// Old formats
+	// Cryptomator 1.4.11
+	private static final String VAULT_FORMAT_V6 = "vault-v6";
+	// Cryptomator 1.5.6
+	private static final String VAULT_FORMAT_V7 = "vault-v7";
+	// Cryptomator 1.6.5
+	private static final String VAULT_CURRENT_FORMAT = "vault-v8";
 
 	private static final String SUM_MD5_FILE = "sum.md5";
 	private static final String CREATED_DIR = "newDirectory";
@@ -61,28 +69,36 @@ public class TestFuseCryptoFs {
 		Files.createDirectory(mountPoint);
 	}
 
-	@Test
-	public void testMountOlderVersion_fails() throws IOException {
+	@ParameterizedTest
+	@ValueSource(strings =
+	{ VAULT_FORMAT_V6, VAULT_FORMAT_V7 })
+	public void testMountOlderVersion_fails(String format) throws IOException {
+		Path oldFormatCopy = copyVault(format, "copy-" + format);
+		var mountOptions = prepareTestVault(oldFormatCopy);
 		assertThrows(FileSystemNeedsMigrationException.class,
-				() -> prepareTestVault(VAULT_OLDER_FORMAT)
-						.mount());
+				() -> mountOptions.mount());
 	}
 
-	@Test
-	public void testMountOlderVersion_migrates() throws IOException {
-		Path oldFormatForMigration = copyVault(VAULT_OLDER_FORMAT, "toMigrate");
+	@ParameterizedTest
+	@ValueSource(strings =
+	{ VAULT_FORMAT_V6, VAULT_FORMAT_V7 })
+	public void testMountOlderVersion_migrates(String format) throws IOException {
+		Path oldFormatForMigration = copyVault(format, "to-migrate-" + format);
 		MountedFs mounted = prepareTestVault(oldFormatForMigration)
 				.migrateFs()
 				.mount();
 		testFilledMountedFs(mounted, false);
 	}
 
-	@Test
-	public void testMountOlderVersion_readOnly_fails() throws IOException {
+	@ParameterizedTest
+	@ValueSource(strings =
+	{ VAULT_FORMAT_V6, VAULT_FORMAT_V7 })
+	public void testMountOlderVersion_readOnly_fails(String format) throws IOException {
+		Path oldFormatCopy = copyVault(format, "copy-" + format);
+		var mountOptions = prepareTestVault(oldFormatCopy)
+				.readOnly();
 		assertThrows(FileSystemNeedsMigrationException.class,
-				() -> prepareTestVault(VAULT_OLDER_FORMAT)
-						.readOnly()
-						.mount());
+				() -> mountOptions.mount());
 	}
 
 	@Test
@@ -193,10 +209,6 @@ public class TestFuseCryptoFs {
 		}
 	}
 
-	private MountOptions prepareTestVault(String name) {
-		return prepareTestVault(getVaultPath(name));
-	}
-
 	private MountOptions prepareTestVault(Path vaultDir) {
 		return FuseCryptoFs.mountOptions(vaultDir, PASSPHRASE)
 				.mountPoint(mountPoint);
@@ -237,6 +249,10 @@ public class TestFuseCryptoFs {
 		assertEquals(sumFile(), remainingFiles.get(0));
 	}
 
+	// Remove path from sums:
+	// - if found, check file sum
+	// - if not found, we verify at the end of the test how many files
+	// are present in the mounted file system
 	private boolean md5SumMatches(Path path, Map<Path, String> sums) {
 		try {
 			String sum = sums.remove(path);
@@ -257,7 +273,7 @@ public class TestFuseCryptoFs {
 	}
 
 	private Path copyVault(String source, String dirName) throws IOException {
-		Path oldFormatForMigration = tempDirRoot.resolve(dirName);
+		Path vaultCopy = tempDirRoot.resolve(dirName);
 
 		Path root = getVaultPath(source);
 		Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
@@ -275,10 +291,10 @@ public class TestFuseCryptoFs {
 			}
 
 			private Path toCreate(Path path) {
-				return oldFormatForMigration.resolve(root.relativize(path));
+				return vaultCopy.resolve(root.relativize(path));
 			}
 		});
 
-		return oldFormatForMigration;
+		return vaultCopy;
 	}
 }

@@ -1,11 +1,16 @@
 package com.github.llbrt.cryptofs.fuse;
 
-import static org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags.MIGRATE_IMPLICITLY;
+import static java.lang.Math.min;
+
 import static org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags.READONLY;
+import static org.cryptomator.cryptofs.migration.api.MigrationContinuationListener.ContinuationResult.PROCEED;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -14,8 +19,17 @@ import org.cryptomator.cryptofs.CryptoFileSystem;
 import org.cryptomator.cryptofs.CryptoFileSystemProperties;
 import org.cryptomator.cryptofs.CryptoFileSystemProperties.FileSystemFlags;
 import org.cryptomator.cryptofs.CryptoFileSystemProvider;
-import org.cryptomator.frontend.fuse.mount.CommandFailedException;
+import org.cryptomator.cryptofs.migration.Migrators;
+import org.cryptomator.cryptofs.migration.api.MigrationContinuationListener.ContinuationEvent;
+import org.cryptomator.cryptofs.migration.api.MigrationContinuationListener.ContinuationResult;
+import org.cryptomator.cryptofs.migration.api.MigrationProgressListener.ProgressState;
+import org.cryptomator.cryptolib.api.CryptoException;
+import org.cryptomator.cryptolib.api.CryptorProvider;
+import org.cryptomator.cryptolib.api.Masterkey;
+import org.cryptomator.cryptolib.api.MasterkeyLoader;
+import org.cryptomator.cryptolib.common.MasterkeyFileAccess;
 import org.cryptomator.frontend.fuse.mount.EnvironmentVariables;
+import org.cryptomator.frontend.fuse.mount.FuseMountException;
 import org.cryptomator.frontend.fuse.mount.FuseMountFactory;
 import org.cryptomator.frontend.fuse.mount.Mount;
 import org.cryptomator.frontend.fuse.mount.Mounter;
@@ -23,13 +37,39 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.github.llbrt.cryptofs.MountedFs;
+import com.google.common.base.Preconditions;
 
 public final class FuseCryptoFs implements MountedFs {
 	private static final Logger log = LoggerFactory.getLogger(FuseCryptoFs.class);
 
 	private static final FileSystemFlags[] EMPTY_FLAGS = new FileSystemFlags[0];
 
-	private static final String DEFAULT_MASTERKEY_FILENAME = "masterkey.cryptomator";
+	private static final byte[] EMPTY_ARRAY = new byte[0];
+	private static final String SCHEME = "masterkeyfile";
+
+	private static final String VAULTCONFIG_FILENAME = "vault.cryptomator";
+
+	private static final String MASTERKEY_FILENAME = "masterkey.cryptomator";
+	private static final URI KEY_ID = URI.create(SCHEME + ":" + MASTERKEY_FILENAME);
+
+	// Wait at most 30 seconds
+	private static final int UMOUNT_COUNT_MAX = 60;
+	private static final long UMOUNT_RETRY_WAIT = 500;
+
+	// Master key file management
+	private static final SecureRandom secureRandom;
+	private static final MasterkeyFileAccess masterkeyFileAccess;
+
+	static {
+		SecureRandom secureRandomTmp;
+		try {
+			secureRandomTmp = SecureRandom.getInstanceStrong();
+		} catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException("A strong algorithm should be installed", e);
+		}
+		secureRandom = secureRandomTmp;
+		masterkeyFileAccess = new MasterkeyFileAccess(EMPTY_ARRAY, secureRandom);
+	}
 
 	private final CryptoFileSystem fs;
 	private final Mount mount;
@@ -54,7 +94,7 @@ public final class FuseCryptoFs implements MountedFs {
 	@Override
 	public void umount() {
 		try {
-			mount.unmount();
+			attemptUmount();
 		} catch (Exception e) {
 			try {
 				log.warn("umount failed, try to force umount", e);
@@ -67,6 +107,26 @@ public final class FuseCryptoFs implements MountedFs {
 				mount.close();
 			} catch (Exception e) {
 				log.warn("close failed", e);
+			}
+		}
+		log.info("umount done");
+	}
+
+	/**
+	 * Tries to unmount the file system.
+	 */
+	private void attemptUmount() throws InterruptedException, FuseMountException {
+		for (int c = 0; c <= UMOUNT_COUNT_MAX; c++) {
+			try {
+				log.info("umount attempt");
+				mount.unmount();
+				return;
+			} catch (FuseMountException e) {
+				if (c >= UMOUNT_COUNT_MAX) {
+					throw e;
+				}
+				log.warn("umount failed (retry)", e);
+				Thread.sleep(UMOUNT_RETRY_WAIT);
 			}
 		}
 	}
@@ -97,11 +157,12 @@ public final class FuseCryptoFs implements MountedFs {
 		Mounter mounter = FuseMountFactory.getMounter();
 		EnvironmentVariables envVars = EnvironmentVariables.create()
 				.withFlags(mounter.defaultMountFlags())
+				.withFileNameTranscoder(mounter.defaultFileNameTranscoder())
 				.withMountPoint(mountPoint)
 				.build();
 		try {
 			return new FuseCryptoFs(fs, mounter.mount(fs.getPath("/"), envVars), mountPoint);
-		} catch (CommandFailedException e) {
+		} catch (FuseMountException e) {
 			throw new RuntimeException(e);
 		}
 	}
@@ -146,13 +207,21 @@ public final class FuseCryptoFs implements MountedFs {
 		public final MountedFs mount() throws IOException {
 			List<FileSystemFlags> flags = new ArrayList<>();
 			if (migrateFs) {
-				flags.add(MIGRATE_IMPLICITLY);
+				do {
+					log.info("Migration requested");
+				} while (migrate());
+				log.info("Migration done");
 			}
 			if (readOnly) {
 				flags.add(READONLY);
 			}
 			CryptoFileSystemProperties cryptoFileSystemProperties = CryptoFileSystemProperties
-					.withPassphrase(passphrase)
+					.cryptoFileSystemProperties()
+					.withKeyLoader(keyId -> {
+						Preconditions.checkArgument(SCHEME.equalsIgnoreCase(keyId.getScheme()), "Only supports keys with scheme " + SCHEME);
+						Path keyFilePath = vaultDir.resolve(keyId.getSchemeSpecificPart());
+						return masterkeyFileAccess.load(keyFilePath, passphrase);
+					})
 					.withFlags(flags.toArray(EMPTY_FLAGS))
 					.build();
 
@@ -163,11 +232,50 @@ public final class FuseCryptoFs implements MountedFs {
 				log.info("Mount point: " + mountPoint);
 			}
 			if (initializeVault) {
-				Files.createDirectories(vaultDir);
-				CryptoFileSystemProvider.initialize(vaultDir, DEFAULT_MASTERKEY_FILENAME, passphrase);
+				initializeNewVault();
 			}
 			CryptoFileSystem fs = CryptoFileSystemProvider.newFileSystem(vaultDir, cryptoFileSystemProperties);
 			return FuseCryptoFs.mount(fs, mountPoint);
+		}
+
+		private void initializeNewVault() throws IOException {
+			Files.createDirectories(vaultDir);
+
+			// Write masterkey
+			Path masterkeyFilePath = vaultDir.resolve(MASTERKEY_FILENAME);
+			try (Masterkey masterkey = Masterkey.generate(secureRandom)) {
+				masterkeyFileAccess.persist(masterkey, masterkeyFilePath, passphrase);
+
+				// Initialize vault
+				try {
+					MasterkeyLoader loader = ignored -> masterkey.copy();
+					CryptoFileSystemProperties fsProps = CryptoFileSystemProperties.cryptoFileSystemProperties()
+							.withCipherCombo(CryptorProvider.Scheme.SIV_CTRMAC)
+							.withKeyLoader(loader)
+							.build();
+					CryptoFileSystemProvider.initialize(vaultDir, fsProps, KEY_ID);
+				} catch (CryptoException e) {
+					throw new IOException("Failed initialize vault.", e);
+				}
+			}
+		}
+
+		private boolean migrate() throws IOException {
+			Migrators migrators = Migrators.get();
+			if (!migrators.needsMigration(vaultDir, VAULTCONFIG_FILENAME, MASTERKEY_FILENAME)) {
+				return false;
+			}
+			migrators.migrate(vaultDir, VAULTCONFIG_FILENAME, MASTERKEY_FILENAME, passphrase, this::migrationProgressChanged, this::migrationRequiresInput);
+			return migrators.needsMigration(vaultDir, VAULTCONFIG_FILENAME, MASTERKEY_FILENAME);
+		}
+
+		private void migrationProgressChanged(ProgressState state, double progress) {
+			log.info("Migration {}: {}%", state, min(100, (int) (progress * 100)));
+		}
+
+		private ContinuationResult migrationRequiresInput(ContinuationEvent continuationEvent) {
+			log.info("Migration {} necessary", continuationEvent);
+			return PROCEED;
 		}
 	}
 }
