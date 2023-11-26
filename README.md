@@ -9,9 +9,9 @@ If you find this project useful, consider donating to [CRYPTOMATOR](https://cryp
 
 ## Build
 
-This project requires [Maven](https://maven.apache.org/) and a JDK version 17.
+This project requires [Maven](https://maven.apache.org/) 3.9.5 (or more) and a JDK version 21.
 
-For a smaller package, the build could be done with the community version of Azul, [Zulu](https://www.azul.com/downloads/zulu-community/?version=java-17-lts&os=linux&package=jdk) - around deb 29MB / installed 51MB with Zulu17.32+13-CA (build 17.0.2+8-LTS).
+The created package may be smaller if the build is made with the community version of Azul, [Zulu](https://www.azul.com/downloads/zulu-community/?version=java-21-lts&os=linux&package=jdk).
 
 The command `dpkg-deb` is necessary to create the Debian package.
 
@@ -20,6 +20,8 @@ The command `dpkg-deb` is necessary to create the Debian package.
 The command `/opt/cryfsmount/bin/cryfsmount` can create a new vault or migrate an old vault to the latest format.
 
 Stop the process to close the vault.
+
+*Note*: fuse v3 is required.
 
 If the mount point is not set, a new temporary directory is created.
 

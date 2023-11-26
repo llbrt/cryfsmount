@@ -28,11 +28,10 @@ import org.cryptomator.cryptolib.api.CryptorProvider;
 import org.cryptomator.cryptolib.api.Masterkey;
 import org.cryptomator.cryptolib.api.MasterkeyLoader;
 import org.cryptomator.cryptolib.common.MasterkeyFileAccess;
-import org.cryptomator.frontend.fuse.mount.EnvironmentVariables;
-import org.cryptomator.frontend.fuse.mount.FuseMountException;
-import org.cryptomator.frontend.fuse.mount.FuseMountFactory;
-import org.cryptomator.frontend.fuse.mount.Mount;
-import org.cryptomator.frontend.fuse.mount.Mounter;
+import org.cryptomator.integrations.mount.Mount;
+import org.cryptomator.integrations.mount.MountFailedException;
+import org.cryptomator.integrations.mount.MountService;
+import org.cryptomator.integrations.mount.UnmountFailedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -115,13 +114,13 @@ public final class FuseCryptoFs implements MountedFs {
 	/**
 	 * Tries to unmount the file system.
 	 */
-	private void attemptUmount() throws InterruptedException, FuseMountException {
+	private void attemptUmount() throws InterruptedException, UnmountFailedException {
 		for (int c = 0; c <= UMOUNT_COUNT_MAX; c++) {
 			try {
 				log.info("umount attempt");
 				mount.unmount();
 				return;
-			} catch (FuseMountException e) {
+			} catch (UnmountFailedException e) {
 				if (c >= UMOUNT_COUNT_MAX) {
 					throw e;
 				}
@@ -154,15 +153,14 @@ public final class FuseCryptoFs implements MountedFs {
 	}
 
 	public static MountedFs mount(CryptoFileSystem fs, Path mountPoint) {
-		Mounter mounter = FuseMountFactory.getMounter();
-		EnvironmentVariables envVars = EnvironmentVariables.create()
-				.withFlags(mounter.defaultMountFlags())
-				.withFileNameTranscoder(mounter.defaultFileNameTranscoder())
-				.withMountPoint(mountPoint)
-				.build();
 		try {
-			return new FuseCryptoFs(fs, mounter.mount(fs.getPath("/"), envVars), mountPoint);
-		} catch (FuseMountException e) {
+			var mountService = MountService.get().findAny().orElseThrow(() -> new MountFailedException("No mount provider found: fuse3 is required"));
+			var rootPath = fs.getRootDirectories().iterator().next();
+			var builder = mountService.forFileSystem(rootPath)
+					.setMountpoint(mountPoint)
+					.setMountFlags(mountService.getDefaultMountFlags());
+			return new FuseCryptoFs(fs, builder.mount(), mountPoint);
+		} catch (MountFailedException e) {
 			throw new RuntimeException(e);
 		}
 	}
@@ -205,13 +203,23 @@ public final class FuseCryptoFs implements MountedFs {
 		}
 
 		public final MountedFs mount() throws IOException {
-			List<FileSystemFlags> flags = new ArrayList<>();
 			if (migrateFs) {
 				do {
 					log.info("Migration requested");
 				} while (migrate());
 				log.info("Migration done");
 			}
+			if (mountPoint == null) {
+				mountPoint = Files.createTempDirectory("cryfsmount-");
+				log.info("Mount point created: " + mountPoint);
+			} else {
+				log.info("Mount point: " + mountPoint);
+			}
+			if (initializeVault) {
+				initializeNewVault();
+			}
+
+			List<FileSystemFlags> flags = new ArrayList<>();
 			if (readOnly) {
 				flags.add(READONLY);
 			}
@@ -225,15 +233,6 @@ public final class FuseCryptoFs implements MountedFs {
 					.withFlags(flags.toArray(EMPTY_FLAGS))
 					.build();
 
-			if (mountPoint == null) {
-				mountPoint = Files.createTempDirectory("cryfsmount-");
-				log.info("Mount point created: " + mountPoint);
-			} else {
-				log.info("Mount point: " + mountPoint);
-			}
-			if (initializeVault) {
-				initializeNewVault();
-			}
 			CryptoFileSystem fs = CryptoFileSystemProvider.newFileSystem(vaultDir, cryptoFileSystemProperties);
 			return FuseCryptoFs.mount(fs, mountPoint);
 		}

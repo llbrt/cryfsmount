@@ -11,5 +11,5 @@ while getopts ":f" opt; do
 	esac
 done
 
-MOUNTED=`/opt/${cmd.mount}/jre/bin/jps | grep ${cmd.mount}.jar | cut -d ' ' -f 1`
-[ -z "$MOUNTED" ] || kill $KILLSIG $MOUNTED
+MOUNTED=$(/opt/${cmd.mount}/jre/bin/jps | grep ${cmd.mount}-${project.version}.jar | cut -d ' ' -f 1)
+[ -z "$MOUNTED" ] || kill $KILLSIG "$MOUNTED"
