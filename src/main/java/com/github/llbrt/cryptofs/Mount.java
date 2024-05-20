@@ -64,7 +64,7 @@ public final class Mount implements Callable<MountedFs> {
 		}
 
 		// Vault must exist and not be empty except on initialization
-		checkIsDirectory(vaultDir, "Vauld directory", initializeVault, initializeVault);
+		checkIsDirectory(vaultDir, "Vault directory", initializeVault, initializeVault);
 
 		// If set, the mount point must exist and be empty
 		if (mountPoint != null) {
